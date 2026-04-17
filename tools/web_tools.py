@@ -88,7 +88,7 @@ def _get_backend() -> str:
     keys manually without running setup.
     """
     configured = (_load_web_config().get("backend") or "").lower().strip()
-    if configured in ("parallel", "firecrawl", "tavily", "exa"):
+    if configured in ("parallel", "firecrawl", "tavily", "exa", "ddg"):
         return configured
 
     # Fallback for manual / legacy config — pick the highest-priority
@@ -104,7 +104,7 @@ def _get_backend() -> str:
         if available:
             return backend
 
-    return "firecrawl"  # default (backward compat)
+    return "ddg"  # default: DuckDuckGo (free, no API key needed)
 
 
 def _is_backend_available(backend: str) -> bool:
@@ -117,6 +117,8 @@ def _is_backend_available(backend: str) -> bool:
         return check_firecrawl_api_key()
     if backend == "tavily":
         return _has_env("TAVILY_API_KEY")
+    if backend == "ddg":
+        return True  # DuckDuckGo is always available (no API key)
     return False
 
 # ─── Firecrawl Client ────────────────────────────────────────────────────────
@@ -988,6 +990,55 @@ def _parallel_search(query: str, limit: int = 5) -> dict:
     return {"success": True, "data": {"web": web_results}}
 
 
+def _ddg_search(query: str, limit: int = 8) -> dict:
+    """Search using DuckDuckGo HTML endpoint. Free, no API key required.
+
+    Scrapes the DuckDuckGo HTML-only interface (html.duckduckgo.com/html/)
+    and extracts titles, URLs, and snippets via regex. This is the same
+    approach used by CheetahClaws and Claw Code.
+    """
+    from tools.interrupt import is_interrupted
+    if is_interrupted():
+        return {"error": "Interrupted", "success": False}
+
+    logger.info("DuckDuckGo search: '%s' (limit: %d)", query, limit)
+    try:
+        resp = httpx.get(
+            "https://html.duckduckgo.com/html/",
+            params={"q": query},
+            headers={"User-Agent": "Mozilla/5.0 (compatible)"},
+            timeout=30,
+            follow_redirects=True,
+        )
+        resp.raise_for_status()
+        html = resp.text
+
+        titles = re.findall(r'class="result__title"[^>]*>.*?<a[^>]*>(.*?)</a>', html, re.DOTALL)
+        urls = re.findall(r'class="result__title"[^>]*>.*?<a[^>]+href="([^"]+)"', html, re.DOTALL)
+        snippets = re.findall(r'class="result__snippet"[^>]*>(.*?)</span>', html, re.DOTALL)
+
+        web_results = []
+        for i, (title, url, snippet) in enumerate(zip(titles, urls, snippets)):
+            if i >= limit:
+                break
+            clean_title = re.sub(r'<[^>]+>', '', title).strip()
+            clean_snippet = re.sub(r'<[^>]+>', '', snippet).strip()
+            if url and clean_title:
+                web_results.append({
+                    "url": url,
+                    "title": clean_title,
+                    "description": clean_snippet,
+                    "position": i + 1,
+                })
+
+        logger.info("DuckDuckGo returned %d results", len(web_results))
+        return {"success": True, "data": {"web": web_results}}
+
+    except Exception as e:
+        logger.warning("DuckDuckGo search failed: %s", e)
+        return {"success": False, "error": str(e), "data": {"web": []}}
+
+
 async def _parallel_extract(urls: List[str]) -> List[Dict[str, Any]]:
     """Extract content from URLs using the Parallel async SDK.
 
@@ -1110,6 +1161,15 @@ def web_search_tool(query: str, limit: int = 5) -> str:
                 "include_images": False,
             })
             response_data = _normalize_tavily_search_results(raw)
+            debug_call_data["results_count"] = len(response_data.get("data", {}).get("web", []))
+            result_json = json.dumps(response_data, indent=2, ensure_ascii=False)
+            debug_call_data["final_response_size"] = len(result_json)
+            _debug.log_call("web_search_tool", debug_call_data)
+            _debug.save()
+            return result_json
+
+        if backend == "ddg":
+            response_data = _ddg_search(query, limit)
             debug_call_data["results_count"] = len(response_data.get("data", {}).get("web", []))
             result_json = json.dumps(response_data, indent=2, ensure_ascii=False)
             debug_call_data["final_response_size"] = len(result_json)
@@ -1923,7 +1983,7 @@ def check_web_api_key() -> bool:
     configured = _load_web_config().get("backend", "").lower().strip()
     if configured in ("exa", "parallel", "firecrawl", "tavily"):
         return _is_backend_available(configured)
-    return any(_is_backend_available(backend) for backend in ("exa", "parallel", "firecrawl", "tavily"))
+    return any(_is_backend_available(backend) for backend in ("exa", "parallel", "firecrawl", "tavily", "ddg"))
 
 
 def check_auxiliary_model() -> bool:
