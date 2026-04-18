@@ -791,8 +791,48 @@ class TestEnvironmentHints:
     def test_build_environment_hints_not_wsl(self, monkeypatch):
         import agent.prompt_builder as _pb
         monkeypatch.setattr(_pb, "is_wsl", lambda: False)
+        monkeypatch.setattr(_pb, "_load_config_environment_hint", lambda: "")
         result = _pb.build_environment_hints()
         assert result == ""
+
+    def test_build_environment_hints_config_hint_only(self, monkeypatch):
+        import agent.prompt_builder as _pb
+        monkeypatch.setattr(_pb, "is_wsl", lambda: False)
+        monkeypatch.setattr(
+            _pb,
+            "_load_config_environment_hint",
+            lambda: "/workspace is a persistent bind-mount.",
+        )
+        result = _pb.build_environment_hints()
+        assert result == "/workspace is a persistent bind-mount."
+
+    def test_build_environment_hints_wsl_plus_config(self, monkeypatch):
+        import agent.prompt_builder as _pb
+        monkeypatch.setattr(_pb, "is_wsl", lambda: True)
+        monkeypatch.setattr(
+            _pb,
+            "_load_config_environment_hint",
+            lambda: "Extra host hint.",
+        )
+        result = _pb.build_environment_hints()
+        assert "WSL" in result
+        assert "Extra host hint." in result
+
+    def test_load_config_environment_hint_missing_key(self, monkeypatch):
+        import agent.prompt_builder as _pb
+        monkeypatch.setattr(
+            "hermes_cli.config.load_config",
+            lambda: {"model": {"default": "x"}},
+        )
+        assert _pb._load_config_environment_hint() == ""
+
+    def test_load_config_environment_hint_strips_whitespace(self, monkeypatch):
+        import agent.prompt_builder as _pb
+        monkeypatch.setattr(
+            "hermes_cli.config.load_config",
+            lambda: {"environment_hints": "  hello world  \n"},
+        )
+        assert _pb._load_config_environment_hint() == "hello world"
 
 
 # =========================================================================

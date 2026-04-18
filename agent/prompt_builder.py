@@ -404,15 +404,37 @@ WSL_ENVIRONMENT_HINT = (
 )
 
 
+def _load_config_environment_hint() -> str:
+    """Read ``environment_hints`` from config.yaml. Free-form string appended
+    to the system prompt — lets the host (e.g. a gateway running hermes inside
+    a container with custom bind-mounts) describe the execution environment
+    without embedding infra facts in SOUL.md.
+    """
+    try:
+        from hermes_cli.config import load_config
+        value = load_config().get("environment_hints")
+    except Exception:
+        return ""
+    if not value:
+        return ""
+    text = str(value).strip()
+    return text
+
+
 def build_environment_hints() -> str:
     """Return environment-specific guidance for the system prompt.
 
-    Detects WSL, and can be extended for Termux, Docker, etc.
-    Returns an empty string when no special environment is detected.
+    Detects WSL, and can be extended for Termux, Docker, etc. Also appends
+    any ``environment_hints`` string configured in config.yaml so hosts
+    running hermes inside sandboxes can describe their bind-mounts.
+    Returns an empty string when no environment hint is present.
     """
     hints: list[str] = []
     if is_wsl():
         hints.append(WSL_ENVIRONMENT_HINT)
+    config_hint = _load_config_environment_hint()
+    if config_hint:
+        hints.append(config_hint)
     return "\n\n".join(hints)
 
 
