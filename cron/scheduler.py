@@ -752,8 +752,8 @@ def run_job(job: dict) -> tuple[bool, str, str, Optional[str]]:
             provider_sort=pr.get("sort"),
             disabled_toolsets=["cronjob", "messaging", "clarify"],
             quiet_mode=True,
-            skip_context_files=True,  # Don't inject SOUL.md/AGENTS.md from scheduler cwd
-            skip_memory=True,  # Cron system prompts would corrupt user representations
+            skip_context_files=False,  # (patched by prior-agent-endpoints) SOUL.md is HERMES_HOME-based; cron should preserve per-agent identity
+            skip_memory=False,  # (patched by prior-agent-endpoints) autonomous agents need memory writes from cron
             platform="cron",
             session_id=_cron_session_id,
             session_db=_session_db,
